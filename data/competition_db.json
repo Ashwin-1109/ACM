@@ -1,0 +1,44 @@
+{
+  "settings": {
+    "id": "settings_main",
+    "registration_open": true,
+    "registration_limit": 100,
+    "event_title": "VISUAL INTELLIGENCE 2.0",
+    "event_date": "2026-10-14",
+    "global_active_round": 1,
+    "winners_published": false,
+    "updated_at": "2026-10-13T20:32:21.713Z"
+  },
+  "room_states": {
+    "K206": {
+      "room_id": "K206",
+      "active_round": 1,
+      "round_status": "IN_PROGRESS",
+      "updated_at": "2026-10-13T20:32:21.713Z"
+    },
+    "K207": {
+      "room_id": "K207",
+      "active_round": 1,
+      "round_status": "IN_PROGRESS",
+      "updated_at": "2026-10-13T20:32:21.713Z"
+    },
+    "K208": {
+      "room_id": "K208",
+      "active_round": 1,
+      "round_status": "IN_PROGRESS",
+      "updated_at": "2026-10-13T20:32:21.713Z"
+    },
+    "K209": {
+      "room_id": "K209",
+      "active_round": 1,
+      "round_status": "IN_PROGRESS",
+      "updated_at": "2026-10-13T20:32:21.713Z"
+    }
+  },
+  "teams": [],
+  "judge_scores": [],
+  "round_attempts": [],
+  "review_approvals": {},
+  "qualifications": {},
+  "audit_logs": []
+}

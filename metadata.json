@@ -1,0 +1,6 @@
+{
+  "name": "Visual Intelligence 2.0 — The Royal Edition",
+  "description": "Where Creativity Meets Intelligence. Official live event management and competition platform for Visual Intelligence 2.0 by Division of AI/ML × ACM Student Chapter.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
