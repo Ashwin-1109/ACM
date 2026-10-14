@@ -1,4 +1,6 @@
-import express, { Request, Response } from 'express';
+import dotenv from 'dotenv';
+dotenv.config({ override: true });
+import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { db } from './src/server/db.js';
@@ -6,6 +8,7 @@ import {
   requireAdminAuth,
   validateSessionToken,
   verifyAdminPassword,
+  verifySupabaseLogin,
   invalidateSession,
 } from './src/server/auth.js';
 import { broadcastEvent, registerSseClient } from './src/server/sse.js';
@@ -21,16 +24,18 @@ app.use(express.json());
 app.set('trust proxy', 1);
 
 // -------------------------------------------------------------
-// PUBLIC ENDPOINTS
+// API ROUTER (Mounted on /api and root fallback for serverless)
 // -------------------------------------------------------------
+const apiRouter = express.Router();
+apiRouter.use(express.json());
 
-// Real-time Server-Sent Events stream
-app.get('/api/events/stream', (req: Request, res: Response) => {
+// 1. Real-time Server-Sent Events stream
+apiRouter.get('/events/stream', (req: Request, res: Response) => {
   registerSseClient(res);
 });
 
-// Event settings and public info
-app.get('/api/info', (_req: Request, res: Response) => {
+// 2. Event settings and public info
+apiRouter.get('/info', (_req: Request, res: Response) => {
   const settings = db.getSettings();
   const roomStates = db.getRoomStates();
   const totalTeams = db.getAllTeams().length;
@@ -45,8 +50,8 @@ app.get('/api/info', (_req: Request, res: Response) => {
   });
 });
 
-// Registration status
-app.get('/api/registration/status', (_req: Request, res: Response) => {
+// 3. Registration status
+apiRouter.get('/registration/status', (_req: Request, res: Response) => {
   const settings = db.getSettings();
   const teams = db.getAllTeams();
   res.json({
@@ -56,8 +61,8 @@ app.get('/api/registration/status', (_req: Request, res: Response) => {
   });
 });
 
-// Submit team registration
-app.post('/api/register', (req: Request, res: Response) => {
+// 4. Submit team registration
+apiRouter.post('/register', (req: Request, res: Response) => {
   const { room_id, team_name, leader_name, member_names } = req.body;
 
   const result = db.registerTeam({
@@ -68,7 +73,7 @@ app.post('/api/register', (req: Request, res: Response) => {
   });
 
   if (!result.success || !result.team) {
-    return res.status(400).json({ error: result.error });
+    return res.status(400).json({ error: result.error || 'Failed to register team.' });
   }
 
   // Broadcast registration event to admin dashboard
@@ -91,8 +96,8 @@ app.post('/api/register', (req: Request, res: Response) => {
   });
 });
 
-// Public leaderboard
-app.get('/api/leaderboard', (req: Request, res: Response) => {
+// 5. Public leaderboard
+apiRouter.get('/leaderboard', (req: Request, res: Response) => {
   const room = (req.query.room as string) || 'overall';
   const roundParam = req.query.round ? parseInt(req.query.round as string, 10) : undefined;
   const roundNumber = roundParam && roundParam >= 1 && roundParam <= 4 ? (roundParam as RoundNumber) : undefined;
@@ -117,17 +122,18 @@ app.get('/api/leaderboard', (req: Request, res: Response) => {
 // ADMIN AUTHENTICATION
 // -------------------------------------------------------------
 
-app.post('/api/admin/login', (req: Request, res: Response) => {
+// Master Key Login
+apiRouter.post('/admin/login', (req: Request, res: Response) => {
   const { password } = req.body;
   if (!password) {
-    return res.status(400).json({ error: 'Administrator password is required.' });
+    return res.status(400).json({ error: 'Administrator master key is required.' });
   }
 
   const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
   const verification = verifyAdminPassword(password, clientIp);
 
   if (!verification.success || !verification.token) {
-    return res.status(401).json({ error: verification.error || 'Invalid password.' });
+    return res.status(401).json({ error: verification.error || 'Invalid administrator master key.' });
   }
 
   res.json({
@@ -137,16 +143,38 @@ app.post('/api/admin/login', (req: Request, res: Response) => {
   });
 });
 
-app.post('/api/admin/logout', (req: Request, res: Response) => {
+// Supabase Board Member Login
+apiRouter.post('/admin/supabase-login', async (req: Request, res: Response) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: 'ACM member email and password are required.' });
+  }
+
+  const result = await verifySupabaseLogin(email, password);
+  if (!result.success || !result.token) {
+    return res.status(401).json({ error: result.error || 'Failed to authenticate with Supabase.' });
+  }
+
+  res.json({
+    success: true,
+    token: result.token,
+    user: result.user,
+    message: 'Authorized ACM Board Member verified.',
+  });
+});
+
+// Logout
+apiRouter.post('/admin/logout', (req: Request, res: Response) => {
   const authHeader = req.headers.authorization;
   const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : (req.headers['x-admin-token'] as string);
   if (token) {
     invalidateSession(token);
   }
-  res.json({ success: true });
+  res.json({ success: true, message: 'Signed out successfully.' });
 });
 
-app.get('/api/admin/verify', (req: Request, res: Response) => {
+// Verify Session
+apiRouter.get('/admin/verify', (req: Request, res: Response) => {
   const authHeader = req.headers.authorization;
   const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : (req.headers['x-admin-token'] as string);
   const isValid = validateSessionToken(token);
@@ -158,7 +186,7 @@ app.get('/api/admin/verify', (req: Request, res: Response) => {
 // -------------------------------------------------------------
 
 // Dashboard Overview Stats
-app.get('/api/admin/overview', requireAdminAuth, (_req: Request, res: Response) => {
+apiRouter.get('/admin/overview', requireAdminAuth, (_req: Request, res: Response) => {
   const allTeams = db.getAllTeams();
   const settings = db.getSettings();
   const roomStates = db.getRoomStates();
@@ -195,7 +223,7 @@ app.get('/api/admin/overview', requireAdminAuth, (_req: Request, res: Response) 
 });
 
 // Get teams list (can filter by room)
-app.get('/api/admin/teams', requireAdminAuth, (req: Request, res: Response) => {
+apiRouter.get('/admin/teams', requireAdminAuth, (req: Request, res: Response) => {
   const room = req.query.room as string;
   let teams = db.getAllTeams();
   if (room && CLASSROOMS.includes(room as ClassroomId)) {
@@ -205,7 +233,7 @@ app.get('/api/admin/teams', requireAdminAuth, (req: Request, res: Response) => {
 });
 
 // Delete team by admin
-app.delete('/api/admin/teams/:teamId', requireAdminAuth, (req: Request, res: Response) => {
+apiRouter.delete('/admin/teams/:teamId', requireAdminAuth, (req: Request, res: Response) => {
   const { teamId } = req.params;
   const result = db.deleteTeam(teamId);
 
@@ -225,7 +253,7 @@ app.delete('/api/admin/teams/:teamId', requireAdminAuth, (req: Request, res: Res
 });
 
 // Classroom specific details & ranked results
-app.get('/api/admin/rooms/:roomId', requireAdminAuth, (req: Request, res: Response) => {
+apiRouter.get('/admin/rooms/:roomId', requireAdminAuth, (req: Request, res: Response) => {
   const roomId = req.params.roomId as ClassroomId;
   if (!CLASSROOMS.includes(roomId)) {
     return res.status(404).json({ error: 'Classroom not found.' });
@@ -248,7 +276,7 @@ app.get('/api/admin/rooms/:roomId', requireAdminAuth, (req: Request, res: Respon
 });
 
 // Save / edit judge scores
-app.post('/api/admin/scores', requireAdminAuth, (req: Request, res: Response) => {
+apiRouter.post('/admin/scores', requireAdminAuth, (req: Request, res: Response) => {
   const { team_id, round_number, judge_number, criterion_scores, judge_notes, solve_time_minutes } = req.body;
 
   if (!team_id || !round_number || !judge_number || !criterion_scores) {
@@ -265,7 +293,7 @@ app.post('/api/admin/scores', requireAdminAuth, (req: Request, res: Response) =>
   });
 
   if (!result.success) {
-    return res.status(400).json({ error: result.error });
+    return res.status(400).json({ error: result.error || 'Failed to save score.' });
   }
 
   // Get refreshed team round result
@@ -289,7 +317,7 @@ app.post('/api/admin/scores', requireAdminAuth, (req: Request, res: Response) =>
 });
 
 // Approve judge disagreement review
-app.post('/api/admin/scores/approve-review', requireAdminAuth, (req: Request, res: Response) => {
+apiRouter.post('/admin/scores/approve-review', requireAdminAuth, (req: Request, res: Response) => {
   const { team_id, round_number, notes } = req.body;
   if (!team_id || !round_number) {
     return res.status(400).json({ error: 'team_id and round_number are required.' });
@@ -311,7 +339,7 @@ app.post('/api/admin/scores/approve-review', requireAdminAuth, (req: Request, re
 });
 
 // Advance room to next round with qualifiers
-app.post('/api/admin/room/advance', requireAdminAuth, (req: Request, res: Response) => {
+apiRouter.post('/admin/room/advance', requireAdminAuth, (req: Request, res: Response) => {
   const { room_id, current_round, qualifier_team_ids } = req.body;
 
   if (!room_id || !CLASSROOMS.includes(room_id) || !current_round || !Array.isArray(qualifier_team_ids)) {
@@ -334,7 +362,7 @@ app.post('/api/admin/room/advance', requireAdminAuth, (req: Request, res: Respon
 });
 
 // Publish Grand Winners
-app.post('/api/admin/publish-winners', requireAdminAuth, (req: Request, res: Response) => {
+apiRouter.post('/admin/publish-winners', requireAdminAuth, (req: Request, res: Response) => {
   const { champion_id, runner_up_id, second_runner_up_id } = req.body;
   if (!champion_id || !runner_up_id || !second_runner_up_id) {
     return res.status(400).json({ error: 'Champion, Runner-up, and Second Runner-up are all required.' });
@@ -352,7 +380,7 @@ app.post('/api/admin/publish-winners', requireAdminAuth, (req: Request, res: Res
 });
 
 // Update event settings
-app.post('/api/admin/settings', requireAdminAuth, (req: Request, res: Response) => {
+apiRouter.post('/admin/settings', requireAdminAuth, (req: Request, res: Response) => {
   const { registration_open, registration_limit, global_active_round, event_title, event_date } = req.body;
 
   const updated = db.updateSettings(
@@ -371,14 +399,20 @@ app.post('/api/admin/settings', requireAdminAuth, (req: Request, res: Response) 
 });
 
 // Reset Database to Fresh Clean State
-app.post('/api/admin/reset-database', requireAdminAuth, (_req: Request, res: Response) => {
+apiRouter.post('/admin/reset-database', requireAdminAuth, (_req: Request, res: Response) => {
   db.resetToCleanState();
   broadcastEvent('DATABASE_RESET', {});
   res.json({ success: true, message: 'Database reset to clean event state.' });
 });
 
+// Audit Logs
+apiRouter.get('/admin/audit-logs', requireAdminAuth, (_req: Request, res: Response) => {
+  const logs = db.getAuditLogs();
+  res.json({ logs });
+});
+
 // CSV Export
-app.get('/api/admin/export-csv', requireAdminAuth, (_req: Request, res: Response) => {
+apiRouter.get('/admin/export-csv', requireAdminAuth, (_req: Request, res: Response) => {
   const teams = db.getAllTeams();
   const rows: string[] = ['Registration Code,Team Name,Room,Leader Name,Members,Created At'];
   for (const t of teams) {
@@ -392,8 +426,49 @@ app.get('/api/admin/export-csv', requireAdminAuth, (_req: Request, res: Response
   res.send(rows.join('\n'));
 });
 
+// Catch-all for API router to ALWAYS return structured JSON 404
+apiRouter.use((req: Request, res: Response) => {
+  res.status(404).json({
+    error: `API route not found: ${req.method} ${req.originalUrl || req.url}`,
+    status: 404,
+  });
+});
+
+// Mount apiRouter on /api
+app.use('/api', apiRouter);
+
+// Fallback: If a serverless rewrite or proxy forwards /admin/* directly without /api:
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (
+    req.path.startsWith('/admin/') ||
+    req.path === '/info' ||
+    req.path === '/register' ||
+    req.path.startsWith('/registration/') ||
+    req.path.startsWith('/leaderboard') ||
+    req.path.startsWith('/events/')
+  ) {
+    // Only intercept if it's an API request or non-GET HTML navigation
+    const acceptHeader = req.headers.accept || '';
+    if (req.method !== 'GET' || acceptHeader.includes('application/json') || req.path.startsWith('/admin/scores') || req.path.startsWith('/admin/teams')) {
+      return apiRouter(req, res, next);
+    }
+  }
+  next();
+});
+
+// Global Express Error Handler (ALWAYS returns JSON)
+app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  console.error('[Server Error]', err);
+  const status = (err as { status?: number }).status || 500;
+  const message = err instanceof Error ? err.message : 'Internal server error';
+  res.status(status).json({
+    error: message,
+    status,
+  });
+});
+
 // -------------------------------------------------------------
-// VITE OR STATIC SERVING
+// VITE OR STATIC SERVING (For frontend SPA routes)
 // -------------------------------------------------------------
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -418,4 +493,8 @@ async function startServer() {
   });
 }
 
-startServer();
+export default app;
+
+if (!process.env.VERCEL) {
+  startServer();
+}

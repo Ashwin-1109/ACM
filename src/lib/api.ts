@@ -40,17 +40,66 @@ function getAuthHeaders(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-// Public API
+/**
+ * Robust JSON response parser that handles both JSON errors and non-JSON (HTML 404/500/proxy) responses
+ * cleanly without throwing unhandled "Unexpected token" SyntaxErrors.
+ */
+async function parseApiResponse<T>(res: Response, fallbackError: string): Promise<T> {
+  const contentType = res.headers.get('content-type') || '';
+
+  if (contentType.includes('application/json')) {
+    let data: unknown;
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error(`${fallbackError} (HTTP ${res.status}): Server returned malformed JSON.`);
+    }
+
+    if (!res.ok) {
+      const errObj = data as { error?: string; message?: string };
+      throw new Error(errObj.error || errObj.message || `${fallbackError} (HTTP ${res.status})`);
+    }
+
+    return data as T;
+  }
+
+  // Non-JSON response (e.g. HTML 404/500 from deployment proxy, Vercel, or web server)
+  const rawText = await res.text();
+  const cleanSummary = rawText
+    .replace(/<[^>]*>?/gm, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160);
+
+  const errorDetail = cleanSummary || res.statusText || 'Unexpected non-JSON response';
+  throw new Error(
+    `${fallbackError} (HTTP ${res.status}): ${errorDetail}. Please ensure backend services are properly configured.`
+  );
+}
+
+// -------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------
+
 export async function fetchEventInfo() {
   const res = await fetch('/api/info');
-  if (!res.ok) throw new Error('Failed to fetch event information');
-  return res.json();
+  return parseApiResponse<{
+    title: string;
+    date: string;
+    registration_open: boolean;
+    registration_limit: number;
+    total_registered: number;
+    winners_published: boolean;
+    room_states: Record<ClassroomId, { room_id: ClassroomId; active_round: RoundNumber; round_status: string }>;
+  }>(res, 'Failed to fetch event information');
 }
 
 export async function fetchRegistrationStatus() {
   const res = await fetch('/api/registration/status');
-  if (!res.ok) throw new Error('Failed to fetch registration status');
-  return res.json();
+  return parseApiResponse<{ open: boolean; current_count: number; limit: number }>(
+    res,
+    'Failed to fetch registration status'
+  );
 }
 
 export async function submitRegistration(payload: RegistrationRequest) {
@@ -59,11 +108,7 @@ export async function submitRegistration(payload: RegistrationRequest) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error || 'Failed to submit registration');
-  }
-  return data;
+  return parseApiResponse<{ success: boolean; team: Team }>(res, 'Failed to submit registration');
 }
 
 export async function fetchLeaderboard(room: ClassroomId | 'overall', round?: RoundNumber): Promise<{
@@ -78,21 +123,45 @@ export async function fetchLeaderboard(room: ClassroomId | 'overall', round?: Ro
     url.searchParams.set('round', String(round));
   }
   const res = await fetch(url.toString());
-  if (!res.ok) throw new Error('Failed to fetch live leaderboard');
-  return res.json();
+  return parseApiResponse<{
+    room: string;
+    active_round: RoundNumber;
+    winners_published: boolean;
+    leaderboard: LeaderboardEntry[];
+  }>(res, 'Failed to fetch live leaderboard');
 }
 
-// Admin API
-export async function adminLogin(password: string): Promise<{ success: boolean; token: string }> {
+// -------------------------------------------------------------
+// ADMIN AUTHENTICATION API
+// -------------------------------------------------------------
+
+export async function adminLogin(password: string): Promise<{ success: boolean; token: string; message?: string }> {
   const res = await fetch('/api/admin/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ password }),
   });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error || 'Invalid administrator password');
-  }
+  const data = await parseApiResponse<{ success: boolean; token: string; message?: string }>(
+    res,
+    'Administrator authentication failed'
+  );
+  setAdminToken(data.token);
+  return data;
+}
+
+export async function adminSupabaseLogin(
+  email: string,
+  password: string
+): Promise<{ success: boolean; token: string; user?: unknown; message?: string }> {
+  const res = await fetch('/api/admin/supabase-login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await parseApiResponse<{ success: boolean; token: string; user?: unknown; message?: string }>(
+    res,
+    'ACM board authentication failed'
+  );
   setAdminToken(data.token);
   return data;
 }
@@ -123,12 +192,23 @@ export async function verifyAdminSession(): Promise<boolean> {
   }
 }
 
+// -------------------------------------------------------------
+// ADMIN DATA API
+// -------------------------------------------------------------
+
 export async function fetchAdminOverview() {
   const res = await fetch('/api/admin/overview', {
     headers: { ...getAuthHeaders() },
   });
-  if (!res.ok) throw new Error('Failed to fetch admin overview');
-  return res.json();
+  return parseApiResponse<{
+    total_teams: number;
+    registration_limit: number;
+    registration_open: boolean;
+    winners_published: boolean;
+    room_stats: Record<ClassroomId, { total: number; active_round: RoundNumber; judged_count: number; qualified_count: number }>;
+    settings: EventSettings;
+    room_states: Record<ClassroomId, { room_id: ClassroomId; active_round: RoundNumber; round_status: string }>;
+  }>(res, 'Failed to fetch admin overview');
 }
 
 export async function fetchAdminTeams(room?: ClassroomId): Promise<{ teams: Team[] }> {
@@ -137,8 +217,7 @@ export async function fetchAdminTeams(room?: ClassroomId): Promise<{ teams: Team
   const res = await fetch(url.toString(), {
     headers: { ...getAuthHeaders() },
   });
-  if (!res.ok) throw new Error('Failed to fetch teams');
-  return res.json();
+  return parseApiResponse<{ teams: Team[] }>(res, 'Failed to fetch teams');
 }
 
 export async function fetchClassroomDetails(roomId: ClassroomId, round?: RoundNumber): Promise<{
@@ -153,8 +232,13 @@ export async function fetchClassroomDetails(roomId: ClassroomId, round?: RoundNu
   const res = await fetch(url.toString(), {
     headers: { ...getAuthHeaders() },
   });
-  if (!res.ok) throw new Error('Failed to fetch classroom details');
-  return res.json();
+  return parseApiResponse<{
+    roomId: ClassroomId;
+    room_state: { active_round: RoundNumber; round_status: string };
+    selected_round: RoundNumber;
+    teams_count: number;
+    results: RoundResult[];
+  }>(res, 'Failed to fetch classroom details');
 }
 
 export async function saveJudgeScoreApi(params: {
@@ -173,9 +257,10 @@ export async function saveJudgeScoreApi(params: {
     },
     body: JSON.stringify(params),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to save judge score');
-  return data;
+  return parseApiResponse<{ success: boolean; score: unknown; round_result: RoundResult }>(
+    res,
+    'Failed to save judge score'
+  );
 }
 
 export async function approveReviewDiscrepancy(params: {
@@ -191,9 +276,7 @@ export async function approveReviewDiscrepancy(params: {
     },
     body: JSON.stringify(params),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to approve review');
-  return data;
+  return parseApiResponse<{ success: boolean; round_result: RoundResult }>(res, 'Failed to approve review');
 }
 
 export async function advanceRoomRoundApi(params: {
@@ -209,9 +292,7 @@ export async function advanceRoomRoundApi(params: {
     },
     body: JSON.stringify(params),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to advance round');
-  return data;
+  return parseApiResponse<{ success: boolean; room_state: unknown }>(res, 'Failed to advance round');
 }
 
 export async function publishFinalWinnersApi(params: {
@@ -227,9 +308,7 @@ export async function publishFinalWinnersApi(params: {
     },
     body: JSON.stringify(params),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to publish winners');
-  return data;
+  return parseApiResponse<{ success: boolean; settings: EventSettings }>(res, 'Failed to publish winners');
 }
 
 export async function updateSettingsApi(settings: Partial<EventSettings>) {
@@ -241,17 +320,14 @@ export async function updateSettingsApi(settings: Partial<EventSettings>) {
     },
     body: JSON.stringify(settings),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to update settings');
-  return data;
+  return parseApiResponse<{ success: boolean; settings: EventSettings }>(res, 'Failed to update settings');
 }
 
 export async function fetchAuditLogs(): Promise<{ logs: AdminAuditEntry[] }> {
   const res = await fetch('/api/admin/audit-logs', {
     headers: { ...getAuthHeaders() },
   });
-  if (!res.ok) throw new Error('Failed to fetch audit logs');
-  return res.json();
+  return parseApiResponse<{ logs: AdminAuditEntry[] }>(res, 'Failed to fetch audit logs');
 }
 
 export async function resetDatabaseApi(): Promise<{ success: boolean; message: string }> {
@@ -259,9 +335,7 @@ export async function resetDatabaseApi(): Promise<{ success: boolean; message: s
     method: 'POST',
     headers: { ...getAuthHeaders() },
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to reset database');
-  return data;
+  return parseApiResponse<{ success: boolean; message: string }>(res, 'Failed to reset database');
 }
 
 export async function deleteTeamApi(teamId: string): Promise<{ success: boolean; message: string }> {
@@ -269,9 +343,5 @@ export async function deleteTeamApi(teamId: string): Promise<{ success: boolean;
     method: 'DELETE',
     headers: { ...getAuthHeaders() },
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to delete team');
-  return data;
+  return parseApiResponse<{ success: boolean; message: string }>(res, 'Failed to delete team');
 }
-
-

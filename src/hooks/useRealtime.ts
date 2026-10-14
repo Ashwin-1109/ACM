@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { isSupabaseConfigured, supabase } from '../lib/supabase';
 
 interface RealtimeHookOptions {
   onScoreUpdated?: (data: unknown) => void;
@@ -15,6 +16,62 @@ export function useRealtime(options: RealtimeHookOptions = {}) {
   const [lastEventTime, setLastEventTime] = useState<number>(Date.now());
 
   useEffect(() => {
+    // 1. If Supabase is configured by user, connect to Supabase Realtime channel!
+    const client = supabase;
+    if (isSupabaseConfigured && client) {
+      const channel = client
+        .channel('vi2_live_channel')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'judge_scores' },
+          (payload) => {
+            setLastEventTime(Date.now());
+            options.onScoreUpdated?.(payload);
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'teams' },
+          (payload) => {
+            setLastEventTime(Date.now());
+            if (payload.eventType === 'DELETE') {
+              options.onTeamDeleted?.(payload);
+            } else {
+              options.onRegistrationCreated?.(payload);
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'room_round_state' },
+          (payload) => {
+            setLastEventTime(Date.now());
+            options.onRoundChanged?.(payload);
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'event_settings' },
+          (payload) => {
+            setLastEventTime(Date.now());
+            options.onSettingsUpdated?.(payload);
+            options.onWinnersPublished?.(payload);
+          }
+        )
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            setConnected(true);
+          } else {
+            setConnected(false);
+          }
+        });
+
+      return () => {
+        client.removeChannel(channel);
+      };
+    }
+
+    // 2. Otherwise use built-in Server-Sent Events (SSE) stream
     let eventSource: EventSource | null = null;
     let reconnectTimer: NodeJS.Timeout | null = null;
 
@@ -104,7 +161,6 @@ export function useRealtime(options: RealtimeHookOptions = {}) {
           setConnected(false);
           eventSource?.close();
           eventSource = null;
-          // Reconnect after 3 seconds
           reconnectTimer = setTimeout(connect, 3000);
         };
       } catch (err) {
@@ -126,7 +182,9 @@ export function useRealtime(options: RealtimeHookOptions = {}) {
     options.onWinnersPublished,
     options.onRegistrationCreated,
     options.onSettingsUpdated,
+    options.onTeamDeleted,
+    options.onDatabaseReset,
   ]);
 
-  return { connected, lastEventTime };
+  return { connected, lastEventTime, isSupabase: isSupabaseConfigured };
 }
