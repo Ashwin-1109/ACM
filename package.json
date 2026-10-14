@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "tsx server.ts",
     "start": "tsx server.ts",
-    "build": "vite build",
-    "clean": "rm -rf dist",
+    "build": "vite build && esbuild src/server/app.ts --bundle --platform=node --format=esm --packages=external --outfile=api/index.js",
+    "clean": "rm -rf dist api/index.js",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

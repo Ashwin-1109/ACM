@@ -7,38 +7,101 @@
     "event_date": "2026-10-14",
     "global_active_round": 1,
     "winners_published": false,
-    "updated_at": "2026-10-13T20:32:21.713Z"
+    "updated_at": "2026-10-14T06:34:49.690949+00:00"
   },
   "room_states": {
     "K206": {
       "room_id": "K206",
       "active_round": 1,
       "round_status": "IN_PROGRESS",
-      "updated_at": "2026-10-13T20:32:21.713Z"
+      "updated_at": "2026-10-14T06:34:49.690949+00:00"
     },
     "K207": {
       "room_id": "K207",
       "active_round": 1,
       "round_status": "IN_PROGRESS",
-      "updated_at": "2026-10-13T20:32:21.713Z"
+      "updated_at": "2026-10-14T06:34:49.690949+00:00"
     },
     "K208": {
       "room_id": "K208",
       "active_round": 1,
       "round_status": "IN_PROGRESS",
-      "updated_at": "2026-10-13T20:32:21.713Z"
+      "updated_at": "2026-10-14T06:34:49.690949+00:00"
     },
     "K209": {
       "room_id": "K209",
       "active_round": 1,
       "round_status": "IN_PROGRESS",
-      "updated_at": "2026-10-13T20:32:21.713Z"
+      "updated_at": "2026-10-14T06:34:49.690949+00:00"
     }
   },
-  "teams": [],
+  "teams": [
+    {
+      "id": "team_1791964753375_9zudc",
+      "registration_code": "VI2-K206-001",
+      "room_id": "K206",
+      "team_name": "Vercel Deployment Test Team",
+      "normalized_team_name": "vercel deployment test team",
+      "leader_name": "Alice Turing",
+      "member_names": [
+        "Bob Lovelace",
+        "Charlie Shannon"
+      ],
+      "created_at": "2026-10-14T07:59:13.375Z"
+    },
+    {
+      "id": "team_1791965273409_z8bye",
+      "registration_code": "VI2-K206-002",
+      "room_id": "K206",
+      "team_name": "VUF",
+      "normalized_team_name": "vuf",
+      "leader_name": "JHVU",
+      "member_names": [
+        "JHHVUY",
+        "HHVUFU"
+      ],
+      "created_at": "2026-10-14T08:07:53.409Z"
+    }
+  ],
   "judge_scores": [],
   "round_attempts": [],
   "review_approvals": {},
-  "qualifications": {},
-  "audit_logs": []
+  "qualifications": {
+    "team_1791964753375_9zudc_1": "COMPETING",
+    "team_1791965273409_z8bye_1": "COMPETING"
+  },
+  "audit_logs": [
+    {
+      "id": "audit_1791965931932_4c31",
+      "action": "DELETE_TEAM",
+      "entity_type": "team",
+      "entity_id": "team_1791965896853_695g3",
+      "change_details": "Admin deleted team \"Royal Cipher Test\" (VI2-K206-003) from Classroom K206",
+      "created_at": "2026-10-14T08:18:51.932Z"
+    },
+    {
+      "id": "audit_1791965896854_7c31",
+      "action": "REGISTER_TEAM",
+      "entity_type": "team",
+      "entity_id": "team_1791965896853_695g3",
+      "change_details": "Registered team \"Royal Cipher Test\" (VI2-K206-003) in K206",
+      "created_at": "2026-10-14T08:18:16.854Z"
+    },
+    {
+      "id": "audit_1791965273409_7pmt",
+      "action": "REGISTER_TEAM",
+      "entity_type": "team",
+      "entity_id": "team_1791965273409_z8bye",
+      "change_details": "Registered team \"VUF\" (VI2-K206-002) in K206",
+      "created_at": "2026-10-14T08:07:53.409Z"
+    },
+    {
+      "id": "audit_1791964753376_nrt3",
+      "action": "REGISTER_TEAM",
+      "entity_type": "team",
+      "entity_id": "team_1791964753375_9zudc",
+      "change_details": "Registered team \"Vercel Deployment Test Team\" (VI2-K206-001) in K206",
+      "created_at": "2026-10-14T07:59:13.376Z"
+    }
+  ]
 }

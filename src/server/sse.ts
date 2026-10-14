@@ -13,8 +13,9 @@ export function registerSseClient(res: Response): string {
   clients.add(client);
 
   res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
 
   // Send initial connected ping
@@ -38,8 +39,8 @@ export function broadcastEvent(eventType: string, payload: unknown) {
   }
 }
 
-// Periodic ping to keep SSE connections alive
-setInterval(() => {
+// Periodic ping to keep SSE connections alive without blocking process shutdown
+const ssePingTimer = setInterval(() => {
   for (const client of clients) {
     try {
       client.res.write(`: ping\n\n`);
@@ -48,3 +49,7 @@ setInterval(() => {
     }
   }
 }, 25000);
+
+if (ssePingTimer.unref) {
+  ssePingTimer.unref();
+}

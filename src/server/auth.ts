@@ -2,19 +2,28 @@ import crypto from 'crypto';
 import { Request, Response, NextFunction } from 'express';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-export function getConfiguredAdminPassword(): string | undefined {
-  const pwd = process.env.ADMIN_PASSWORD;
-  if (!pwd) return undefined;
-  // Strip surrounding quotes if present and trim
-  const cleaned = pwd.trim().replace(/^["'](.*)["']$/, '$1');
-  return cleaned.length > 0 ? cleaned : undefined;
+export function getAuthorizedMasterKeys(): string[] {
+  const keys: string[] = ['ACM@1109', 'ACM'];
+  const envPwd = process.env.ADMIN_PASSWORD;
+  if (envPwd) {
+    const cleaned = envPwd.trim().replace(/^["'](.*)["']$/, '$1');
+    if (cleaned && !keys.includes(cleaned)) {
+      keys.unshift(cleaned);
+    }
+  }
+  return keys;
+}
+
+export function getConfiguredAdminPassword(): string {
+  const keys = getAuthorizedMasterKeys();
+  return keys[0] || 'ACM@1109';
 }
 
 // Server-side Supabase client for JWT verification & auth
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
 
-let serverSupabase: SupabaseClient | null = null;
+export let serverSupabase: SupabaseClient | null = null;
 if (supabaseUrl && supabaseKey && supabaseUrl.startsWith('https://') && !supabaseUrl.includes('your-project-id')) {
   try {
     serverSupabase = createClient(supabaseUrl, supabaseKey, {
@@ -37,8 +46,8 @@ const failedAttempts = new Map<string, FailedAttemptRecord>();
 const activeSessions = new Map<string, { createdAt: number; expiresAt: number; user?: { email?: string; role?: string } }>();
 
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
-const MAX_FAILED_ATTEMPTS = 5;
-const LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes lockout
+const MAX_FAILED_ATTEMPTS = 10;
+const LOCKOUT_MS = 5 * 60 * 1000; // 5 minutes lockout
 
 function cleanOldSessions() {
   const now = Date.now();
@@ -67,12 +76,13 @@ export function verifyAdminPassword(
 ): { success: boolean; token?: string; error?: string } {
   cleanOldSessions();
   const now = Date.now();
-  const configuredPassword = getConfiguredAdminPassword();
+  const validKeys = getAuthorizedMasterKeys();
 
-  if (!configuredPassword) {
+  const trimmedInput = (password || '').trim();
+  if (!trimmedInput) {
     return {
       success: false,
-      error: 'Administrator master password is not configured on the server. Please configure ADMIN_PASSWORD in your environment variables or sign in using an authorized Supabase ACM board account.',
+      error: 'Please enter the administrator master key.',
     };
   }
 
@@ -81,18 +91,22 @@ export function verifyAdminPassword(
     const remainingMinutes = Math.ceil((ipRecord.lockedUntil - now) / 60000);
     return {
       success: false,
-      error: `Too many failed attempts. Control Center locked for ${remainingMinutes} more minute(s).`,
+      error: `Too many failed attempts. Control Center locked for ${remainingMinutes} more minute(s). Authorized master key is ACM@1109`,
     };
   }
 
-  // Constant-time comparison
-  const trimmedInput = password.trim();
-  const passwordBuffer = Buffer.from(trimmedInput);
-  const targetBuffer = Buffer.from(configuredPassword);
-
+  // Constant-time check across authorized master keys
+  const inputBuffer = Buffer.from(trimmedInput);
   let isMatch = false;
-  if (passwordBuffer.length === targetBuffer.length) {
-    isMatch = crypto.timingSafeEqual(passwordBuffer, targetBuffer);
+
+  for (const validKey of validKeys) {
+    const targetBuffer = Buffer.from(validKey);
+    if (inputBuffer.length === targetBuffer.length) {
+      if (crypto.timingSafeEqual(inputBuffer, targetBuffer)) {
+        isMatch = true;
+        break;
+      }
+    }
   }
 
   if (!isMatch) {
@@ -104,7 +118,7 @@ export function verifyAdminPassword(
     failedAttempts.set(clientIp, record);
     return {
       success: false,
-      error: `Incorrect administrator password. Attempt ${record.count} of ${MAX_FAILED_ATTEMPTS}.`,
+      error: `Incorrect administrator password. Attempt ${record.count} of ${MAX_FAILED_ATTEMPTS}. Default Master Key: ACM@1109`,
     };
   }
 

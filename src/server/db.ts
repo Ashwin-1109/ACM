@@ -16,6 +16,7 @@ import {
   Team,
 } from '../types';
 import { calculateRound2SpeedMarks, COMPETITION_ROUNDS } from '../constants/competition';
+import { serverSupabase } from './auth.js';
 
 interface DatabaseSchema {
   settings: EventSettings;
@@ -64,23 +65,68 @@ class DatabaseStore {
   private isSaving = false;
 
   constructor() {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
-    }
+    this.data = getInitialDatabase();
 
-    if (fs.existsSync(DB_FILE)) {
-      try {
+    try {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+
+      if (fs.existsSync(DB_FILE)) {
         const fileContent = fs.readFileSync(DB_FILE, 'utf-8');
         this.data = JSON.parse(fileContent);
-      } catch (err) {
-        console.error('Failed to parse database file, resetting to clean initial state:', err);
-        this.data = getInitialDatabase();
+      } else {
         this.persist();
       }
-    } else {
-      // 100% CLEAN PRODUCTION DATABASE — ZERO DEMO / FAKE TEAMS
+    } catch {
+      // In read-only environments (e.g. Vercel serverless /var/task), rely on in-memory & Supabase
       this.data = getInitialDatabase();
-      this.persist();
+    }
+
+    this.initSupabaseSync();
+  }
+
+  private async initSupabaseSync() {
+    if (!serverSupabase) return;
+    try {
+      const [teamsRes, settingsRes, roomsRes] = await Promise.all([
+        serverSupabase.from('teams').select('*'),
+        serverSupabase.from('event_settings').select('*').eq('id', 'settings_main').maybeSingle(),
+        serverSupabase.from('room_round_state').select('*'),
+      ]);
+
+      if (teamsRes.data && Array.isArray(teamsRes.data) && teamsRes.data.length > 0) {
+        const sbTeams: Team[] = teamsRes.data.map((row) => ({
+          id: row.id,
+          registration_code: row.registration_code,
+          room_id: row.room_id as ClassroomId,
+          team_name: row.team_name,
+          normalized_team_name: row.normalized_team_name || row.team_name.toLowerCase(),
+          leader_name: row.leader_name,
+          member_names: row.member_names || [],
+          created_at: row.created_at,
+        }));
+        this.data.teams = sbTeams;
+      }
+
+      if (settingsRes.data) {
+        this.data.settings = { ...this.data.settings, ...settingsRes.data };
+      }
+
+      if (roomsRes.data && Array.isArray(roomsRes.data)) {
+        for (const row of roomsRes.data) {
+          if (row.room_id && this.data.room_states[row.room_id as ClassroomId]) {
+            this.data.room_states[row.room_id as ClassroomId] = {
+              room_id: row.room_id as ClassroomId,
+              active_round: row.active_round,
+              round_status: row.round_status,
+              updated_at: row.updated_at,
+            };
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[Supabase Sync] Hydration skipped or encountered error:', err);
     }
   }
 
@@ -92,7 +138,7 @@ class DatabaseStore {
       fs.writeFileSync(tempPath, JSON.stringify(this.data, null, 2), 'utf-8');
       fs.renameSync(tempPath, DB_FILE);
     } catch (err) {
-      console.error('Database write error:', err);
+      // In read-only serverless filesystems, disk persist is skipped safely
     } finally {
       this.isSaving = false;
     }
@@ -228,6 +274,29 @@ class DatabaseStore {
     this.data.teams.push(newTeam);
     this.data.qualifications[`${newTeam.id}_1`] = 'COMPETING';
 
+    if (serverSupabase) {
+      serverSupabase
+        .from('teams')
+        .insert([{
+          id: newTeam.id,
+          registration_code: newTeam.registration_code,
+          room_id: newTeam.room_id,
+          team_name: newTeam.team_name,
+          normalized_team_name: newTeam.normalized_team_name,
+          leader_name: newTeam.leader_name,
+          member_names: newTeam.member_names,
+          created_at: newTeam.created_at,
+        }])
+        .then(
+          ({ error }) => {
+            if (error) console.error('[Supabase Sync] Team registration failed in Supabase:', error.message);
+          },
+          (err: unknown) => {
+            console.error('[Supabase Sync] Team insert error:', err);
+          }
+        );
+    }
+
     this.logAudit('REGISTER_TEAM', 'team', id, `Registered team "${teamName}" (${code}) in ${req.room_id}`);
     this.persist();
 
@@ -242,6 +311,17 @@ class DatabaseStore {
 
     const removedTeam = this.data.teams[teamIndex];
     this.data.teams.splice(teamIndex, 1);
+
+    if (serverSupabase) {
+      serverSupabase
+        .from('teams')
+        .delete()
+        .eq('id', teamId)
+        .then(
+          () => {},
+          () => {}
+        );
+    }
 
     // Remove associated scores, attempts, qualifications, and approvals
     this.data.judge_scores = this.data.judge_scores.filter((s) => s.team_id !== teamId);

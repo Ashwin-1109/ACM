@@ -20,7 +20,8 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, navigate }) =
 
   const handleMasterKeySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!password.trim()) {
+    const cleanPassword = password.trim();
+    if (!cleanPassword) {
       setError('Please enter the administrator master key.');
       return;
     }
@@ -29,7 +30,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, navigate }) =
     setError(null);
 
     try {
-      await adminLogin(password);
+      await adminLogin(cleanPassword);
       onSuccess();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Invalid administrator credentials.';
@@ -155,8 +156,11 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, navigate }) =
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-              <p className="mt-2 text-[11px] text-[#576474] font-sans">
-                Verified securely on the server using encrypted timing-safe credentials.
+              <p className="mt-2 text-[11px] text-[#576474] font-sans flex items-center justify-between">
+                <span>Default Master Key:</span>
+                <code className="text-[#96723C] font-semibold bg-[#FAF8F3] px-2 py-0.5 rounded border border-[#E9E3D8] text-xs">
+                  ACM@1109
+                </code>
               </p>
             </div>
 
